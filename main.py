@@ -1,3 +1,15 @@
+# Kütüphanelerin yüklü olup olmadığını kontrol et
+print("Kütüphane kontrol sonuçları:")
+
+# Python yollarını yazdır
+import sys
+print("Python yolları:")
+for path in sys.path:
+    print(f"- {path}")
+print("\n")
+
+import speech_recognition
+import pydub
 import os
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
@@ -5,6 +17,106 @@ import re
 import sys
 import json
 import difflib
+import datetime
+import codecs
+import speech_recognition as sr
+from pydub import AudioSegment
+import tempfile
+import threading
+import moviepy
+from moviepy import VideoFileClip
+
+
+# SRT dosyalarını işlemek için kendi sınıfımız
+class SubtitleItem:
+    def __init__(self, index=0, start=None, end=None, content="", proprietary=""):
+        self.index = index
+        self.start = start or datetime.timedelta()
+        self.end = end or datetime.timedelta()
+        self.content = content
+        self.proprietary = proprietary
+
+    def __str__(self):
+        return f"Subtitle(index={self.index}, start={self.start}, end={self.end}, content='{self.content}')"
+
+def parse_srt(srt_content):
+    """SRT dosyasını parse et ve SubtitleItem listesi döndür"""
+    subs = []
+    blocks = srt_content.strip().replace('\r\n', '\n').split('\n\n')
+
+    for block in blocks:
+        if not block.strip():
+            continue
+
+        lines = block.split('\n')
+        if len(lines) < 3:
+            continue
+
+        # İndeks
+        try:
+            index = int(lines[0])
+        except ValueError:
+            continue
+
+        # Zaman aralığı
+        time_line = lines[1]
+        try:
+            start_time, end_time = time_line.split(' --> ')
+            start = parse_time(start_time)
+            end = parse_time(end_time)
+        except (ValueError, IndexError):
+            continue
+
+        # İçerik
+        content = '\n'.join(lines[2:])
+
+        # SubtitleItem oluştur
+        sub = SubtitleItem(index=index, start=start, end=end, content=content)
+        subs.append(sub)
+
+    return subs
+
+def parse_time(time_str):
+    """SRT zaman formatını datetime.timedelta'ya dönüştür"""
+    hours, minutes, seconds = time_str.replace(',', '.').split(':')
+    hours = int(hours)
+    minutes = int(minutes)
+    seconds_parts = seconds.split('.')
+    seconds = int(seconds_parts[0])
+    milliseconds = int(seconds_parts[1]) if len(seconds_parts) > 1 else 0
+
+    return datetime.timedelta(hours=hours, minutes=minutes, seconds=seconds, milliseconds=milliseconds)
+
+def format_time(td):
+    """datetime.timedelta'yı SRT zaman formatına dönüştür"""
+    total_seconds = int(td.total_seconds())
+    hours = total_seconds // 3600
+    minutes = (total_seconds % 3600) // 60
+    seconds = total_seconds % 60
+    milliseconds = td.microseconds // 1000
+
+    return f"{hours:02d}:{minutes:02d}:{seconds:02d},{milliseconds:03d}"
+
+def compose_srt(subs):
+    """SubtitleItem listesini SRT formatına dönüştür"""
+    result = []
+
+    for i, sub in enumerate(subs, 1):
+        # İndeks
+        result.append(str(i))
+
+        # Zaman aralığı
+        result.append(f"{format_time(sub.start)} --> {format_time(sub.end)}")
+
+        # İçerik
+        result.append(sub.content)
+
+        # Boş satır
+        result.append("")
+
+    return "\n".join(result)
+
+
 
 class VideoSubRenamer:
     # Tema renkleri
@@ -254,6 +366,9 @@ class VideoSubRenamer:
         self.context_menu = tk.Menu(self.root, tearoff=0)
         self.context_menu.add_command(label="Manuel Eşleştir", command=self.manual_match)
         self.context_menu.add_command(label="Eşleştirmeyi Kaldır", command=self.remove_match)
+        self.context_menu.add_separator()
+        self.context_menu.add_command(label="Manuel Altyazı Senkronizasyonu", command=self.sync_subtitle)
+        self.context_menu.add_command(label="Otomatik Altyazı Senkronizasyonu", command=self.auto_sync_subtitle)
 
         # Sağ tıklama olayını bağla
         self.file_tree.bind("<Button-3>", self.show_context_menu)
@@ -278,6 +393,12 @@ class VideoSubRenamer:
 
         rename_button = ttk.Button(button_frame, text="Altyazıları Yeniden Adlandır", command=self.rename_subtitles)
         rename_button.pack(side=tk.LEFT, padx=5)
+
+        sync_button = ttk.Button(button_frame, text="Manuel Senkronizasyon", command=self.sync_subtitle)
+        sync_button.pack(side=tk.LEFT, padx=5)
+
+        auto_sync_button = ttk.Button(button_frame, text="Otomatik Senkronizasyon", command=self.auto_sync_subtitle)
+        auto_sync_button.pack(side=tk.LEFT, padx=5)
 
         # Tema değiştirme butonu - Mevcut temaya göre metin ayarla
         button_text = "Açık Tema" if self.is_dark_theme else "Karanlık Tema"
@@ -780,7 +901,7 @@ class VideoSubRenamer:
             self.drag_label.place(x=event.x_root - self.root.winfo_rootx(),
                                  y=event.y_root - self.root.winfo_rooty())
 
-    def on_drag_release(self, event):
+    def on_drag_release(self, _):
         """Sürükleme işlemini bitir ve bırakma işlemini gerçekleştir"""
         # Sürükleme etiketini temizle
         if hasattr(self, 'drag_label') and self.drag_label:
@@ -974,7 +1095,482 @@ class VideoSubRenamer:
         else:
             self.status_var.set("Hiçbir dosya yeniden adlandırılmadı.")
 
+    def sync_subtitle(self):
+        """Seçili altyazı dosyasını senkronize et"""
+        # Seçili öğeyi al
+        selected_item = self.file_tree.selection()
+        if not selected_item:
+            messagebox.showinfo("Bilgi", "Lütfen bir eşleşme seçin.")
+            return
+
+        # Seçili öğenin değerlerini al
+        values = self.file_tree.item(selected_item[0], "values")
+        video_file = values[0]
+        subtitle_file = values[1]
+
+        # Eğer hem video hem de altyazı varsa, senkronizasyon penceresini aç
+        if video_file and subtitle_file:
+            folder_path = self.folder_path_var.get()
+            if not folder_path or not os.path.isdir(folder_path):
+                messagebox.showerror("Hata", "Lütfen geçerli bir klasör seçin.")
+                return
+
+            subtitle_path = os.path.join(folder_path, subtitle_file)
+
+            # Altyazı dosyasının varlığını kontrol et
+            if not os.path.exists(subtitle_path):
+                messagebox.showerror("Hata", f"Altyazı dosyası bulunamadı: {subtitle_file}")
+                return
+
+            # Altyazı senkronizasyon penceresini aç
+            self.show_sync_dialog(subtitle_path, subtitle_file)
+        else:
+            messagebox.showinfo("Bilgi", "Lütfen eşleşmiş bir video ve altyazı seçin.")
+
+    def show_sync_dialog(self, subtitle_path, subtitle_file):
+        """Altyazı senkronizasyon penceresini göster"""
+        # Altyazı senkronizasyon penceresi
+        sync_dialog = tk.Toplevel(self.root)
+        sync_dialog.title(f"Altyazı Senkronizasyonu - {subtitle_file}")
+        sync_dialog.geometry("600x400")
+        sync_dialog.transient(self.root)
+        sync_dialog.grab_set()
+
+        # Tema uygula
+        sync_dialog.configure(bg=self.current_theme["bg"])
+
+        # Ana çerçeve
+        main_frame = ttk.Frame(sync_dialog, padding="10")
+        main_frame.pack(fill=tk.BOTH, expand=True)
+
+        # Açıklama
+        ttk.Label(main_frame, text="Altyazı zamanlamasını ayarlayın:").pack(pady=(0, 10))
+
+        # Zaman kaydırma bölümü
+        time_frame = ttk.LabelFrame(main_frame, text="Zaman Kaydırma", padding="10")
+        time_frame.pack(fill=tk.X, pady=5)
+
+        # Saniye ve milisaniye giriş alanları
+        input_frame = ttk.Frame(time_frame)
+        input_frame.pack(fill=tk.X, pady=5)
+
+        ttk.Label(input_frame, text="Saniye:").grid(row=0, column=0, padx=5, pady=5)
+        seconds_var = tk.StringVar(value="0")
+        seconds_entry = ttk.Entry(input_frame, textvariable=seconds_var, width=10)
+        seconds_entry.grid(row=0, column=1, padx=5, pady=5)
+
+        ttk.Label(input_frame, text="Milisaniye:").grid(row=0, column=2, padx=5, pady=5)
+        milliseconds_var = tk.StringVar(value="0")
+        milliseconds_entry = ttk.Entry(input_frame, textvariable=milliseconds_var, width=10)
+        milliseconds_entry.grid(row=0, column=3, padx=5, pady=5)
+
+        # Yön seçimi (ileri/geri)
+        direction_var = tk.StringVar(value="forward")
+        forward_radio = ttk.Radiobutton(input_frame, text="İleri", variable=direction_var, value="forward")
+        forward_radio.grid(row=0, column=4, padx=5, pady=5)
+        backward_radio = ttk.Radiobutton(input_frame, text="Geri", variable=direction_var, value="backward")
+        backward_radio.grid(row=0, column=5, padx=5, pady=5)
+
+        # Slider
+        slider_frame = ttk.Frame(time_frame)
+        slider_frame.pack(fill=tk.X, pady=10)
+
+        ttk.Label(slider_frame, text="-10s").pack(side=tk.LEFT)
+        time_slider = ttk.Scale(slider_frame, from_=-10, to=10, orient=tk.HORIZONTAL, length=400)
+        time_slider.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
+        time_slider.set(0)  # Başlangıç değeri
+        ttk.Label(slider_frame, text="+10s").pack(side=tk.LEFT)
+
+        # Slider değeri değiştiğinde saniye ve milisaniye alanlarını güncelle
+        def update_time_values(_):
+            value = time_slider.get()
+            if value >= 0:
+                direction_var.set("forward")
+            else:
+                direction_var.set("backward")
+                value = abs(value)
+
+            seconds = int(value)
+            milliseconds = int((value - seconds) * 1000)
+            seconds_var.set(str(seconds))
+            milliseconds_var.set(str(milliseconds))
+
+        time_slider.bind("<Motion>", update_time_values)
+
+        # Önizleme bölümü
+        preview_frame = ttk.LabelFrame(main_frame, text="Önizleme", padding="10")
+        preview_frame.pack(fill=tk.BOTH, expand=True, pady=5)
+
+        # Altyazı içeriğini göster
+        preview_text = tk.Text(preview_frame, wrap=tk.WORD, height=10,
+                              bg=self.current_theme["treeview_bg"],
+                              fg=self.current_theme["treeview_fg"])
+        preview_text.pack(fill=tk.BOTH, expand=True)
+
+        # Altyazı dosyasını yükle ve önizleme göster
+        try:
+            with open(subtitle_path, 'r', encoding='utf-8') as f:
+                subtitle_content = f.read()
+            preview_text.insert(tk.END, subtitle_content[:1000] + "...\n\n(Önizleme ilk 1000 karakteri göstermektedir)")
+        except Exception as e:
+            preview_text.insert(tk.END, f"Altyazı dosyası yüklenirken hata oluştu: {str(e)}")
+
+        # Butonlar
+        button_frame = ttk.Frame(main_frame)
+        button_frame.pack(fill=tk.X, pady=10)
+
+        # Senkronize et butonu
+        def apply_sync():
+            try:
+                seconds = int(seconds_var.get() or "0")
+                milliseconds = int(milliseconds_var.get() or "0")
+                direction = direction_var.get()
+
+                # Toplam zaman farkını hesapla (milisaniye cinsinden)
+                time_shift = seconds * 1000 + milliseconds
+                if direction == "backward":
+                    time_shift = -time_shift
+
+                # Altyazıyı senkronize et
+                success = self.shift_subtitle_timing(subtitle_path, time_shift)
+
+                if success:
+                    messagebox.showinfo("Başarılı", f"Altyazı başarıyla senkronize edildi.\nZaman kaydırma: {time_shift} ms")
+                    sync_dialog.destroy()
+                else:
+                    messagebox.showerror("Hata", "Altyazı senkronize edilirken bir hata oluştu.")
+            except ValueError:
+                messagebox.showerror("Hata", "Lütfen geçerli sayısal değerler girin.")
+
+        ttk.Button(button_frame, text="Senkronize Et", command=apply_sync).pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_frame, text="İptal", command=sync_dialog.destroy).pack(side=tk.LEFT, padx=5)
+
+    def shift_subtitle_timing(self, subtitle_path, time_shift_ms):
+        """Altyazı zamanlamasını kaydır"""
+        try:
+            # Altyazı dosyasını oku
+            with open(subtitle_path, 'r', encoding='utf-8') as f:
+                subtitle_content = f.read()
+
+            # SRT dosyasını parse et
+            subs = parse_srt(subtitle_content)
+
+            # Zaman kaydırma miktarını timedelta olarak hesapla
+            time_shift = datetime.timedelta(milliseconds=time_shift_ms)
+
+            # Her altyazı için zamanlamayı kaydır
+            for sub in subs:
+                sub.start += time_shift
+                sub.end += time_shift
+
+                # Negatif zamanları düzelt
+                if sub.start.total_seconds() < 0:
+                    sub.start = datetime.timedelta(0)
+                if sub.end.total_seconds() < 0:
+                    sub.end = datetime.timedelta(milliseconds=1)
+
+            # Değiştirilmiş altyazıyı kaydet
+            with open(subtitle_path, 'w', encoding='utf-8') as f:
+                f.write(compose_srt(subs))
+
+            return True
+        except Exception as e:
+            print(f"Altyazı senkronize edilirken hata oluştu: {str(e)}")
+            return False
+
+    def auto_sync_subtitle(self):
+
+
+        # Seçili öğeyi al
+        selected_item = self.file_tree.selection()
+        if not selected_item:
+            messagebox.showinfo("Bilgi", "Lütfen bir eşleşme seçin.")
+            return
+
+        # Seçili öğenin değerlerini al
+        values = self.file_tree.item(selected_item[0], "values")
+        video_file = values[0]
+        subtitle_file = values[1]
+
+        # Eğer hem video hem de altyazı varsa, otomatik senkronizasyon işlemini başlat
+        if video_file and subtitle_file:
+            folder_path = self.folder_path_var.get()
+            if not folder_path or not os.path.isdir(folder_path):
+                messagebox.showerror("Hata", "Lütfen geçerli bir klasör seçin.")
+                return
+
+            video_path = os.path.join(folder_path, video_file)
+            subtitle_path = os.path.join(folder_path, subtitle_file)
+
+            # Dosyaların varlığını kontrol et
+            if not os.path.exists(video_path):
+                messagebox.showerror("Hata", f"Video dosyası bulunamadı: {video_file}")
+                return
+
+            if not os.path.exists(subtitle_path):
+                messagebox.showerror("Hata", f"Altyazı dosyası bulunamadı: {subtitle_file}")
+                return
+
+            # Otomatik senkronizasyon penceresini göster
+            self.show_auto_sync_dialog(video_path, subtitle_path, video_file, subtitle_file)
+        else:
+            messagebox.showinfo("Bilgi", "Lütfen eşleşmiş bir video ve altyazı seçin.")
+
+    def show_auto_sync_dialog(self, video_path, subtitle_path, video_file, _):
+        """Otomatik senkronizasyon penceresini göster"""
+        # Otomatik senkronizasyon penceresi
+        sync_dialog = tk.Toplevel(self.root)
+        sync_dialog.title(f"Otomatik Altyazı Senkronizasyonu - {video_file}")
+        sync_dialog.geometry("600x400")
+        sync_dialog.transient(self.root)
+        sync_dialog.grab_set()
+
+        # Tema uygula
+        sync_dialog.configure(bg=self.current_theme["bg"])
+
+        # Ana çerçeve
+        main_frame = ttk.Frame(sync_dialog, padding="10")
+        main_frame.pack(fill=tk.BOTH, expand=True)
+
+        # Açıklama
+        ttk.Label(main_frame, text="Video ve altyazı otomatik olarak senkronize edilecek.").pack(pady=(0, 10))
+        ttk.Label(main_frame, text="Bu işlem birkaç dakika sürebilir.").pack(pady=(0, 10))
+
+        # İlerleme çubuğu
+        progress_var = tk.DoubleVar()
+        progress_bar = ttk.Progressbar(main_frame, variable=progress_var, maximum=100)
+        progress_bar.pack(fill=tk.X, pady=10)
+
+        # Durum etiketi
+        status_var = tk.StringVar(value="Hazırlanıyor...")
+        status_label = ttk.Label(main_frame, textvariable=status_var)
+        status_label.pack(pady=10)
+
+        # Sonuç çerçevesi
+        result_frame = ttk.LabelFrame(main_frame, text="Sonuç", padding="10")
+        result_frame.pack(fill=tk.BOTH, expand=True, pady=5)
+
+        # Sonuç metni
+        result_text = tk.Text(result_frame, wrap=tk.WORD, height=10,
+                             bg=self.current_theme["treeview_bg"],
+                             fg=self.current_theme["treeview_fg"])
+        result_text.pack(fill=tk.BOTH, expand=True)
+        result_text.insert(tk.END, "İşlem başlatıldığında sonuçlar burada gösterilecek.")
+
+        # Butonlar
+        button_frame = ttk.Frame(main_frame)
+        button_frame.pack(fill=tk.X, pady=10)
+
+        # Başlat butonu
+        start_button = ttk.Button(button_frame, text="Başlat",
+                                 command=lambda: self.start_auto_sync(video_path, subtitle_path,
+                                                                    progress_var, status_var,
+                                                                    result_text, start_button,
+                                                                    cancel_button, sync_dialog))
+        start_button.pack(side=tk.LEFT, padx=5)
+
+        # İptal butonu
+        cancel_button = ttk.Button(button_frame, text="İptal", command=sync_dialog.destroy)
+        cancel_button.pack(side=tk.LEFT, padx=5)
+
+    def start_auto_sync(self, video_path, subtitle_path, progress_var, status_var,
+                       result_text, start_button, cancel_button, dialog):
+        """Otomatik senkronizasyon işlemini başlat"""
+        # Butonları devre dışı bırak
+        start_button.config(state=tk.DISABLED)
+        cancel_button.config(state=tk.DISABLED)
+
+        # Sonuç metnini temizle
+        result_text.delete(1.0, tk.END)
+        result_text.insert(tk.END, "İşlem başlatıldı...\n")
+
+        # İşlemi arka planda çalıştır
+        thread = threading.Thread(target=self.run_auto_sync,
+                                 args=(video_path, subtitle_path, progress_var, status_var,
+                                      result_text, start_button, cancel_button, dialog))
+        thread.daemon = True
+        thread.start()
+
+    def run_auto_sync(self, video_path, subtitle_path, progress_var, status_var,
+                     result_text, start_button, cancel_button, _):
+        """Otomatik senkronizasyon işlemini arka planda çalıştır"""
+        try:
+            # İlerleme ve durum güncelleme
+            def update_ui(progress, status, result=None):
+                progress_var.set(progress)
+                status_var.set(status)
+                if result:
+                    result_text.insert(tk.END, result + "\n")
+                    result_text.see(tk.END)
+
+            # 1. Adım: Video dosyasından ses çıkarma
+            update_ui(10, "Video dosyasından ses çıkarılıyor...")
+
+            # Geçici dosya oluştur
+            temp_dir = tempfile.gettempdir()
+            audio_path = os.path.join(temp_dir, "temp_audio.wav")
+
+            # Video dosyasından ses çıkar
+            video = mp.VideoFileClip(video_path)
+            video.audio.write_audiofile(audio_path, verbose=False, logger=None)
+
+            update_ui(30, "Ses dosyası çıkarıldı.", "Ses dosyası başarıyla çıkarıldı.")
+
+            # 2. Adım: Altyazı dosyasını okuma
+            update_ui(40, "Altyazı dosyası okunuyor...")
+
+            try:
+                with open(subtitle_path, 'r', encoding='utf-8') as f:
+                    subtitle_content = f.read()
+                subs = parse_srt(subtitle_content)
+
+                # İlk birkaç altyazıyı al (en fazla 5)
+                first_subs = subs[:min(5, len(subs))]
+
+                update_ui(50, "Altyazı dosyası okundu.",
+                         f"Altyazı dosyası okundu. Toplam {len(subs)} altyazı bulundu.")
+
+            except Exception as e:
+                update_ui(100, "Hata!", f"Altyazı dosyası okunurken hata oluştu: {str(e)}")
+                self.enable_buttons(start_button, cancel_button)
+                return
+
+            # 3. Adım: Konuşma tanıma
+            update_ui(60, "Ses dosyası analiz ediliyor...")
+
+            # Konuşma tanıma için ses dosyasını yükle
+            recognizer = sr.Recognizer()
+
+            # İlk altyazıların zamanlarını al
+            first_sub_times = [(sub.start.total_seconds(), sub.end.total_seconds(), sub.content)
+                              for sub in first_subs]
+
+            # Ses dosyasını yükle
+            audio = AudioSegment.from_file(audio_path)
+
+            # Zaman farkını hesaplamak için değişkenler
+            time_diffs = []
+
+            # Her bir altyazı için konuşma tanıma yap
+            for i, (start_time, end_time, content) in enumerate(first_sub_times):
+                update_ui(60 + (i * 5), f"Altyazı {i+1}/{len(first_sub_times)} analiz ediliyor...")
+
+                # Ses dosyasından ilgili kısmı al (biraz daha geniş bir aralık)
+                start_ms = max(0, int(start_time * 1000) - 2000)  # 2 saniye önce başla
+                end_ms = min(len(audio), int(end_time * 1000) + 2000)  # 2 saniye sonra bitir
+
+                # Ses segmentini al
+                segment = audio[start_ms:end_ms]
+
+                # Geçici ses dosyası oluştur
+                segment_path = os.path.join(temp_dir, f"segment_{i}.wav")
+                segment.export(segment_path, format="wav")
+
+                # Konuşma tanıma
+                try:
+                    with sr.AudioFile(segment_path) as source:
+                        audio_data = recognizer.record(source)
+                        text = recognizer.recognize_google(audio_data, language="tr-TR")
+
+                        # Altyazı içeriği ile karşılaştır
+                        similarity = self.text_similarity(content, text)
+
+                        if similarity > 0.3:  # Benzerlik eşiği
+                            # Konuşma tanıma zamanını hesapla
+                            # Bu basit bir yaklaşım, gerçek uygulamada daha karmaşık olabilir
+                            detected_time = start_ms / 1000.0  # saniye cinsinden
+                            subtitle_time = start_time
+
+                            # Zaman farkını hesapla
+                            time_diff = detected_time - subtitle_time
+                            time_diffs.append(time_diff)
+
+                            update_ui(60 + (i * 5), f"Altyazı {i+1} analiz edildi.",
+                                     f"Altyazı: '{content}'\nTanınan: '{text}'\nBenzerlik: {similarity:.2f}\nZaman farkı: {time_diff:.2f} saniye")
+                        else:
+                            update_ui(60 + (i * 5), f"Altyazı {i+1} analiz edildi.",
+                                     f"Altyazı: '{content}'\nTanınan: '{text}'\nBenzerlik düşük: {similarity:.2f}")
+
+                except Exception as e:
+                    update_ui(60 + (i * 5), f"Altyazı {i+1} analiz edilemedi.",
+                             f"Hata: {str(e)}")
+
+                # Geçici dosyayı temizle
+                try:
+                    os.remove(segment_path)
+                except:
+                    pass
+
+            # 4. Adım: Zaman farkını hesapla ve altyazıyı kaydır
+            update_ui(90, "Zaman farkı hesaplanıyor...")
+
+            if time_diffs:
+                # Ortalama zaman farkını hesapla
+                avg_time_diff = sum(time_diffs) / len(time_diffs)
+
+                # Milisaniye cinsinden zaman farkı
+                time_shift_ms = int(avg_time_diff * 1000)
+
+                update_ui(95, "Altyazı kaydırılıyor...",
+                         f"Ortalama zaman farkı: {avg_time_diff:.2f} saniye ({time_shift_ms} ms)")
+
+                # Altyazıyı kaydır
+                success = self.shift_subtitle_timing(subtitle_path, time_shift_ms)
+
+                if success:
+                    update_ui(100, "Tamamlandı!",
+                             f"Altyazı başarıyla senkronize edildi. Zaman kaydırma: {time_shift_ms} ms")
+                else:
+                    update_ui(100, "Hata!",
+                             "Altyazı kaydırılırken bir hata oluştu.")
+            else:
+                update_ui(100, "Tamamlandı!",
+                         "Zaman farkı hesaplanamadı. Altyazı değiştirilmedi.")
+
+            # Geçici ses dosyasını temizle
+            try:
+                os.remove(audio_path)
+            except:
+                pass
+
+        except Exception as e:
+            # Hata durumunda
+            progress_var.set(100)
+            status_var.set("Hata!")
+            result_text.insert(tk.END, f"İşlem sırasında bir hata oluştu: {str(e)}\n")
+            result_text.see(tk.END)
+
+        finally:
+            # Butonları tekrar aktif hale getir
+            self.enable_buttons(start_button, cancel_button)
+
+    def enable_buttons(self, start_button, cancel_button):
+        """Butonları tekrar aktif hale getir"""
+        # Ana thread'de çalıştır
+        self.root.after(0, lambda: start_button.config(state=tk.NORMAL))
+        self.root.after(0, lambda: cancel_button.config(state=tk.NORMAL))
+
+    def text_similarity(self, text1, text2):
+        """İki metin arasındaki benzerliği hesapla"""
+        # Metinleri temizle ve küçük harfe çevir
+        text1 = re.sub(r'[^\w\s]', '', text1.lower())
+        text2 = re.sub(r'[^\w\s]', '', text2.lower())
+
+        # Kelimelere ayır
+        words1 = set(text1.split())
+        words2 = set(text2.split())
+
+        # Ortak kelime sayısı
+        common_words = words1.intersection(words2)
+
+        # Benzerlik oranı
+        if not words1 or not words2:
+            return 0.0
+
+        return len(common_words) / max(len(words1), len(words2))
+
 if __name__ == "__main__":
     root = tk.Tk()
     app = VideoSubRenamer(root)
     root.mainloop()
+
