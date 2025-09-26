@@ -6,5 +6,6 @@ filmi altyazı veya altyazıyı filme sürükleyerek mauel eşleme çalışmıyo
 
 sağ tık ile context menü debug da görünüyor ama açılmıyor. 
 
-mauels sync ekle
+manuels sync ekle
 
+bir sorun var. debug modunu aktifleştirdiğimde 1. algoritamnın %63 eşleşen bir film ve alatyazı bulduğunu görüyoeum. ama dosyalar kısmında o video ve altyazı eşleşmiş görünmüyor.
