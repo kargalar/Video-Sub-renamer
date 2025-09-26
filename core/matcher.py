@@ -39,18 +39,22 @@ class FileMatcher:
             # Subtitle file extensions
             subtitle_extensions = ['.srt', '.sub', '.ass', '.ssa', '.vtt']
 
-            # Find all files
+            # Find all files (only in the root folder, not subdirectories)
             all_files = []
-            for root, dirs, files in os.walk(folder_path):
-                for file in files:
-                    full_path = os.path.join(root, file)
-                    rel_path = os.path.relpath(full_path, folder_path)
+            try:
+                for file in os.listdir(folder_path):
+                    full_path = os.path.join(folder_path, file)
+                    if os.path.isfile(full_path):  # Only include files, not directories
+                        rel_path = file  # Since we're only in root, relative path is just the filename
 
-                    # Skip files starting with x if requested
-                    if skip_x and file.startswith('x'):
-                        continue
+                        # Skip files starting with x if requested
+                        if skip_x and file.startswith('x'):
+                            continue
 
-                    all_files.append(rel_path)
+                        all_files.append(rel_path)
+            except PermissionError:
+                print(f"Debug: Permission denied accessing folder: {folder_path}")
+                return
 
             # Separate video and subtitle files
             for file in all_files:
@@ -1207,3 +1211,79 @@ class FileMatcher:
                 matches.append((video_file, best_match, best_score))
 
         return matches
+
+    def clean_prefixes(self, folder_path, prefix="--"):
+        """
+        Remove specified prefix from matched video and subtitle files.
+
+        Args:
+            folder_path (str): Base folder path
+            prefix (str): Prefix to remove from filenames
+
+        Returns:
+            tuple: (cleaned_count, errors) where errors is list of error messages
+        """
+        try:
+            if not folder_path or not os.path.isdir(folder_path):
+                return 0, ["Invalid folder path"]
+
+            if not self.matches:
+                return 0, ["No matches to clean"]
+
+            cleaned_count = 0
+            errors = []
+
+            # Collect all files to clean (both videos and subtitles from matches)
+            files_to_clean = set()
+            for video_file, subtitle_file in self.matches:
+                files_to_clean.add(video_file)
+                files_to_clean.add(subtitle_file)
+
+            for file_path in files_to_clean:
+                if file_path.startswith(prefix):
+                    new_name = file_path[len(prefix):].lstrip()  # Remove prefix and leading spaces
+                    
+                    # Skip if new name is same as current
+                    if new_name == file_path:
+                        continue
+
+                    try:
+                        old_full_path = os.path.join(folder_path, file_path)
+                        new_full_path = os.path.join(folder_path, new_name)
+
+                        # Backup existing file if it exists
+                        if os.path.exists(new_full_path):
+                            backup_name = new_name + ".bak"
+                            backup_path = os.path.join(folder_path, backup_name)
+                            os.rename(new_full_path, backup_path)
+
+                        # Rename file
+                        os.rename(old_full_path, new_full_path)
+                        cleaned_count += 1
+                        print(f"Debug: Cleaned '{file_path}' to '{new_name}'")
+
+                        # Update internal lists
+                        if file_path in self.video_files:
+                            self.video_files[self.video_files.index(file_path)] = new_name
+                        if file_path in self.subtitle_files:
+                            self.subtitle_files[self.subtitle_files.index(file_path)] = new_name
+
+                        # Update matches
+                        updated_matches = []
+                        for v, s in self.matches:
+                            new_v = new_name if v == file_path else v
+                            new_s = new_name if s == file_path else s
+                            updated_matches.append((new_v, new_s))
+                        self.matches = updated_matches
+
+                    except Exception as e:
+                        error_msg = f"{file_path}: {str(e)}"
+                        errors.append(error_msg)
+                        print(f"Debug: Error cleaning {error_msg}")
+
+            return cleaned_count, errors
+
+        except Exception as e:
+            error_msg = f"Unexpected error during cleaning: {str(e)}"
+            print(f"Debug: {error_msg}")
+            return 0, [error_msg]
