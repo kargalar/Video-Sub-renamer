@@ -190,6 +190,11 @@ class VideoSubRenamer:
         # Başlangıç temasını uygula
         self.apply_theme()
 
+        # Son klasör yolunu yükle
+        last_folder = self.load_folder_path()
+        if last_folder:
+            self.folder_path_var.set(last_folder)
+
     def load_theme_preference(self):
         """Kaydedilmiş tema tercihini yükle"""
         try:
@@ -209,6 +214,30 @@ class VideoSubRenamer:
                 json.dump(settings, f)
         except Exception as e:
             print(f"Tema tercihi kaydedilirken hata oluştu: {str(e)}")
+
+    def load_folder_path(self):
+        """Kaydedilmiş klasör yolunu yükle"""
+        try:
+            if os.path.exists(self.settings_file):
+                with open(self.settings_file, 'r') as f:
+                    settings = json.load(f)
+                    return settings.get('last_folder', '')
+        except Exception as e:
+            print(f"Klasör yolu yüklenirken hata oluştu: {str(e)}")
+        return ''
+
+    def save_folder_path(self):
+        """Klasör yolunu kaydet"""
+        try:
+            settings = {}
+            if os.path.exists(self.settings_file):
+                with open(self.settings_file, 'r') as f:
+                    settings = json.load(f)
+            settings['last_folder'] = self.folder_path_var.get()
+            with open(self.settings_file, 'w') as f:
+                json.dump(settings, f)
+        except Exception as e:
+            print(f"Klasör yolu kaydedilirken hata oluştu: {str(e)}")
 
     def toggle_theme(self):
         """Temayı değiştir (açık/karanlık)"""
@@ -420,6 +449,7 @@ class VideoSubRenamer:
         folder_path = filedialog.askdirectory()
         if folder_path:
             self.folder_path_var.set(folder_path)
+            self.save_folder_path()  # Klasör yolunu kaydet
             self.scan_files()
 
     def scan_files(self):
@@ -538,6 +568,20 @@ class VideoSubRenamer:
         if unmatched_videos or unmatched_subtitles:
             if len(unmatched_videos) > 0 and len(unmatched_subtitles) > 0:
                 self.status_var.set(f"{len(unmatched_videos)} video ve {len(unmatched_subtitles)} altyazı eşleştirilemedi. Manuel eşleştirme yapabilirsiniz.")
+
+        # Eşleşmeyen videolara -- ön eki ekle
+        folder_path = self.folder_path_var.get()
+        for video_file in unmatched_videos:
+            if not video_file.startswith('--'):
+                old_path = os.path.join(folder_path, video_file)
+                new_name = '--' + video_file
+                new_path = os.path.join(folder_path, new_name)
+                try:
+                    os.rename(old_path, new_path)
+                    # Listeyi güncelle
+                    self.video_files = [new_name if v == video_file else v for v in self.video_files]
+                except Exception as e:
+                    print(f"Dosya yeniden adlandırılamadı: {video_file} - {str(e)}")
 
     def levenshtein_distance(self, s1, s2):
         """İki string arasındaki Levenshtein mesafesini hesaplar (düzenleme mesafesi)"""
@@ -991,6 +1035,21 @@ class VideoSubRenamer:
 
     def create_match(self, video_file, subtitle_file):
         """Yeni bir eşleştirme oluştur veya mevcut eşleştirmeyi güncelle"""
+        folder_path = self.folder_path_var.get()
+
+        # Eğer video -- ile başlıyorsa, --'yi kaldır
+        if video_file.startswith('--'):
+            old_path = os.path.join(folder_path, video_file)
+            new_video_name = video_file[2:]  # --'yi kaldır
+            new_path = os.path.join(folder_path, new_video_name)
+            try:
+                os.rename(old_path, new_path)
+                video_file = new_video_name  # Yeni adı kullan
+                # Listeyi güncelle
+                self.video_files = [new_video_name if v == '--' + new_video_name else v for v in self.video_files]
+            except Exception as e:
+                print(f"Dosya yeniden adlandırılamadı: {video_file} - {str(e)}")
+
         # Önce tüm eşleşmeleri kopyala
         new_matches = []
 
@@ -1037,9 +1096,21 @@ class VideoSubRenamer:
 
         # Eğer hem video hem de altyazı varsa, eşleşmeyi kaldır
         if video_file and subtitle_file:
+            folder_path = self.folder_path_var.get()
             for i, (v, s) in enumerate(self.matches):
                 if v == video_file and s == subtitle_file:
                     self.matches.pop(i)
+                    # Video dosyasına -- ön eki ekle
+                    if not video_file.startswith('--'):
+                        old_path = os.path.join(folder_path, video_file)
+                        new_name = '--' + video_file
+                        new_path = os.path.join(folder_path, new_name)
+                        try:
+                            os.rename(old_path, new_path)
+                            # Listeyi güncelle
+                            self.video_files = [new_name if v == video_file else v for v in self.video_files]
+                        except Exception as e:
+                            print(f"Dosya yeniden adlandırılamadı: {video_file} - {str(e)}")
                     self.display_matches()
                     return
 
