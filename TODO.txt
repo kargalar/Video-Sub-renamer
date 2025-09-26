@@ -1,0 +1,9 @@
+eşleşenlerin başındaki -- kaldırılsın
+
+sağ tık menü açılmıyor ama debuga mesaj geliyor
+Debug: Show context menu called
+Debug: Show context menu called
+Debug: Show context menu called
+Debug: Show context menu called
+
+matcher dosyasını böleleim. ortak kodlar varsa matcherda dursun. algolritmalar fakrlı dosya oalrak algoritme 1 2 3 4 diye ayrılsın

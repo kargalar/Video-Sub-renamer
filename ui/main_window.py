@@ -38,7 +38,7 @@ class VideoSubRenamerApp:
             last_folder = self.settings_manager.load_folder_path()
             if last_folder:
                 self.ui.folder_path_var.set(last_folder)
-                self.ui.scan_files()
+                # Auto-scan will be handled by UIComponents
 
             print("Debug: VideoSubRenamerApp initialized successfully")
 
