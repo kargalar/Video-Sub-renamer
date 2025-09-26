@@ -102,84 +102,6 @@ class VideoSubRenamerApp:
             print(f"Debug: Error removing match: {str(e)}")
             messagebox.showerror("Hata", f"Eşleştirme kaldırma hatası: {str(e)}")
 
-    def sync_subtitle(self):
-        """Handle manual subtitle synchronization."""
-        try:
-            # Get selected item
-            selected_item = self.ui.file_tree.selection()
-            if not selected_item:
-                messagebox.showinfo("Bilgi", "Lütfen bir eşleşme seçin.")
-                return
-
-            # Get selected values
-            values = self.ui.file_tree.item(selected_item[0], "values")
-            video_file = values[0]
-            subtitle_file = values[1]
-
-            # Sync if both video and subtitle exist
-            if video_file and subtitle_file:
-                folder_path = self.ui.folder_path_var.get()
-                if not folder_path:
-                    messagebox.showerror("Hata", "Lütfen bir klasör seçin.")
-                    return
-
-                subtitle_path = os.path.join(folder_path, subtitle_file)
-
-                # Check subtitle file exists
-                if not os.path.exists(subtitle_path):
-                    messagebox.showerror("Hata", f"Altyazı dosyası bulunamadı: {subtitle_file}")
-                    return
-
-                # Show sync dialog
-                self.show_sync_dialog(subtitle_path, subtitle_file)
-            else:
-                messagebox.showinfo("Bilgi", "Lütfen eşleşmiş bir video ve altyazı seçin.")
-
-        except Exception as e:
-            print(f"Debug: Error syncing subtitle: {str(e)}")
-            messagebox.showerror("Hata", f"Altyazı senkronizasyon hatası: {str(e)}")
-
-    def auto_sync_subtitle(self):
-        """Handle automatic subtitle synchronization."""
-        try:
-            # Get selected item
-            selected_item = self.ui.file_tree.selection()
-            if not selected_item:
-                messagebox.showinfo("Bilgi", "Lütfen bir eşleşme seçin.")
-                return
-
-            # Get selected values
-            values = self.ui.file_tree.item(selected_item[0], "values")
-            video_file = values[0]
-            subtitle_file = values[1]
-
-            # Auto sync if both video and subtitle exist
-            if video_file and subtitle_file:
-                folder_path = self.ui.folder_path_var.get()
-                if not folder_path:
-                    messagebox.showerror("Hata", "Lütfen bir klasör seçin.")
-                    return
-
-                subtitle_path = os.path.join(folder_path, subtitle_file)
-                video_path = os.path.join(folder_path, video_file)
-
-                # Check files exist
-                if not os.path.exists(subtitle_path):
-                    messagebox.showerror("Hata", f"Altyazı dosyası bulunamadı: {subtitle_file}")
-                    return
-                if not os.path.exists(video_path):
-                    messagebox.showerror("Hata", f"Video dosyası bulunamadı: {video_file}")
-                    return
-
-                # Perform auto sync
-                self.perform_auto_sync(video_path, subtitle_path, subtitle_file)
-            else:
-                messagebox.showinfo("Bilgi", "Lütfen eşleşmiş bir video ve altyazı seçin.")
-
-        except Exception as e:
-            print(f"Debug: Error auto syncing subtitle: {str(e)}")
-            messagebox.showerror("Hata", f"Otomatik senkronizasyon hatası: {str(e)}")
-
     def show_context_menu(self, event):
         """Show context menu on right-click."""
         try:
@@ -273,14 +195,6 @@ class VideoSubRenamerApp:
     def show_manual_match_dialog(self, video_file, subtitle_file):
         """Show manual match dialog - placeholder."""
         print(f"Debug: Manual match dialog for {video_file} -> {subtitle_file}")
-
-    def show_sync_dialog(self, subtitle_path, subtitle_file):
-        """Show sync dialog - placeholder."""
-        print(f"Debug: Sync dialog for {subtitle_file}")
-
-    def perform_auto_sync(self, video_path, subtitle_path, subtitle_file):
-        """Perform auto sync - placeholder."""
-        print(f"Debug: Auto sync for {subtitle_file}")
 
 
 # Import os here to avoid circular imports

@@ -6,11 +6,11 @@ a = Analysis(
     pathex=[],
     binaries=[],
     datas=[],
-    hiddenimports=['speech_recognition', 'pydub', 'moviepy'],
+    hiddenimports=[],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=['tensorflow', 'torch', 'torchvision', 'torchaudio', 'transformers', 'sklearn', 'scipy', 'matplotlib', 'numpy', 'opencv-python', 'pillow', 'pandas', 'h5py', 'grpc', 'google', 'cv2', 'PyQt5', 'zmq', 'sqlite3', 'imageio', 'fsspec'],
+    excludes=[],
     noarchive=False,
     optimize=0,
 )

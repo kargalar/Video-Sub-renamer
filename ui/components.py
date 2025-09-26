@@ -89,9 +89,6 @@ class UIComponents:
             self.context_menu = tk.Menu(self.root, tearoff=0)
             self.context_menu.add_command(label="Manuel Eşleştir", command=self.manual_match)
             self.context_menu.add_command(label="Eşleştirmeyi Kaldır", command=self.remove_match)
-            self.context_menu.add_separator()
-            self.context_menu.add_command(label="Manuel Altyazı Senkronizasyonu", command=self.sync_subtitle)
-            self.context_menu.add_command(label="Otomatik Altyazı Senkronizasyonu", command=self.auto_sync_subtitle)
 
             # Bind right-click event
             self.file_tree.bind("<Button-3>", self.show_context_menu)
@@ -116,12 +113,6 @@ class UIComponents:
 
             rename_button = ttk.Button(button_frame, text="Altyazıları Yeniden Adlandır", command=self.rename_subtitles)
             rename_button.pack(side=tk.LEFT, padx=5)
-
-            sync_button = ttk.Button(button_frame, text="Manuel Senkronizasyon", command=self.sync_subtitle)
-            sync_button.pack(side=tk.LEFT, padx=5)
-
-            auto_sync_button = ttk.Button(button_frame, text="Otomatik Senkronizasyon", command=self.auto_sync_subtitle)
-            auto_sync_button.pack(side=tk.LEFT, padx=5)
 
             # Theme toggle button - Set text based on current theme
             button_text = "Açık Tema" if self.is_dark_theme else "Karanlık Tema"

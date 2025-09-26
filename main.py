@@ -10,10 +10,7 @@ print("\n")
 
 # Gerekli kütüphaneleri kontrol et
 required_libraries = [
-    'speech_recognition',
-    'pydub',
-    'tkinter',
-    'moviepy'
+    'tkinter'
 ]
 
 missing_libraries = []

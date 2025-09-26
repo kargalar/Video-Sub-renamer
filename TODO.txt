@@ -1,2 +1,10 @@
 
 matcher dosyasını böleleim. ortak kodlar varsa matcherda dursun. algolritmalar fakrlı dosya oalrak algoritme 1 2 3 4 diye ayrılsın
+
+
+filmi altyazı veya altyazıyı filme sürükleyerek mauel eşleme çalışmıyor.
+
+sağ tık ile context menü debug da görünüyor ama açılmıyor. 
+
+mauels sync ekle
+
